@@ -17,7 +17,7 @@ import { Address, Call } from "viem";
 import { useAccount } from "wagmi";
 import { ConnectWallet, Wallet } from "@coinbase/onchainkit/wallet";
 
-const priceToPay = 1.5;
+const priceToPay = .1;
 
 export default function TransactionFlow({
   username,
@@ -30,25 +30,62 @@ export default function TransactionFlow({
 }) {
   const { address } = useAccount();
   const [orderId, setOrderId] = useState<string | null>(null);
+  const [pendingStartTime, setPendingStartTime] = useState<number | null>(null);
+  
   const handleOnStatus = useCallback(
     (status: LifecycleStatus) => {
-      console.log(
-        "📦 Tx Lifecycle Status:",
-        status.statusName,
-        status.statusData,
-      );
+      const now = Date.now();
+      const timestamp = new Date(now).toISOString();
+      
+      // Log transaction status with clear status indicators and timestamps
+      console.log(`========================`);
+      console.log(`TRANSACTION STATUS: ${status.statusName.toUpperCase()} (${timestamp})`);
+      console.log(`Details:`, status.statusData);
+      
+      // Track pending transaction time
+      if (status.statusName === "transactionPending") {
+        if (!pendingStartTime) {
+          setPendingStartTime(now);
+          console.log(`⏳ PENDING STARTED: Transaction entered pending state at ${timestamp}`);
+        } else {
+          const pendingDuration = Math.floor((now - pendingStartTime) / 1000);
+          console.log(`⏳ PENDING DURATION: Transaction has been pending for ${pendingDuration} seconds`);
+          
+          // Alert if transaction is pending for too long (e.g., more than 60 seconds)
+          if (pendingDuration > 60) {
+            console.warn(`⚠️ POTENTIAL STUCK TRANSACTION: Pending for ${pendingDuration} seconds`);
+            console.log(`Network Congestion: Check https://etherscan.io/gastracker or https://basescan.org`);
+          }
+        }
+      } else if (pendingStartTime && (status.statusName === "transactionLegacyExecuted" || status.statusName === "success")) {
+        const pendingDuration = Math.floor((now - pendingStartTime) / 1000);
+        console.log(`✅ PENDING RESOLVED: Transaction was pending for ${pendingDuration} seconds before moving to ${status.statusName}`);
+        setPendingStartTime(null);
+      }
+      
+      console.log(`========================`);
 
       if (status.statusName === "success" && orderId) {
+        console.log(`✅ SUCCESS: Transaction completed successfully.`);
         // apiRequest.id.webhookWorldOrder(orderId);
         setShowSuccess(true);
       } else if (status.statusName === "error") {
+        console.log(`❌ ERROR: Transaction failed - ${status.statusData.message}`);
+        console.log(`Error Details:`, status.statusData);
+        if (pendingStartTime) {
+          const pendingDuration = Math.floor((now - pendingStartTime) / 1000);
+          console.log(`❌ PENDING FAILED: Transaction was pending for ${pendingDuration} seconds before failing`);
+          setPendingStartTime(null);
+        }
         alert("❌ Transaction Failed: " + status.statusData.message);
       }
     },
-    [orderId, setShowSuccess],
+    [orderId, setShowSuccess, pendingStartTime],
   );
 
   const callsCallback = async () => {
+    console.log(`🚀 STARTING TRANSACTION: Preparing payment (${new Date().toISOString()})`);
+    
     // const data = await apiRequest.id.createBaseOrder(username, years);
 
     const response = await fetch(
@@ -60,6 +97,7 @@ export default function TransactionFlow({
 
     // Convert USD to ETH
     const ethAmount = priceToPay / ethUsdPrice;
+    console.log(`💰 PAYMENT: $${priceToPay} = ${ethAmount} ETH`);
 
     const data = {
       data: {
@@ -69,6 +107,7 @@ export default function TransactionFlow({
     };
 
     setOrderId(data.data.orderId);
+    console.log(`📝 ORDER ID: ${data.data.orderId}`);
 
     const receiverAddress =
       "0xbc7D860f6e8ceC925d411F868b76098B44Dc4Fa6" as Address;
@@ -82,7 +121,7 @@ export default function TransactionFlow({
       },
     ];
 
-    console.log({ calls });
+    console.log(`📤 SENDING: ${ethAmount} ETH to ${receiverAddress}`);
 
     return calls;
   };
